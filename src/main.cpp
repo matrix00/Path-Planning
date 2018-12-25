@@ -11,6 +11,8 @@
 #include "spline.h"
 
 using namespace std;
+#define min(x,y) (x<y? x:y)
+#define max(x,y) (x>y? x:y)
 
 // for convenience
 using json = nlohmann::json;
@@ -19,6 +21,7 @@ using json = nlohmann::json;
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+double MAX_SPEED=49.5;
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -164,6 +167,46 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+
+bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car_s, int prev_size)
+{
+	bool canSwitch = true;
+
+	for (int i=0; i < sensor_fusion.size(); i++)
+	{
+		float d = sensor_fusion[i][6];
+		cout << i << " ######### lane # of this car " << (int) d/4 << endl;
+		if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane -2))
+		{
+			double vx = sensor_fusion[i][3];
+			double vy = sensor_fusion[i][4];
+			double check_speed = sqrt(vx*vx+vy*vy);
+			double check_car_s = sensor_fusion[i][5];
+
+			//check_car_s -= ((double) prev_size * 0.02 * check_speed);
+			check_car_s -= ((double) 1 * check_speed); //distance cover by 1 sec
+			//check s values greater than mine and s gap
+//			if ((check_car_s > car_s && (check_car_s - car_s) < 30))
+			cout << i<<  " $$$$$$$$$$$$$$$$$  SWITCH $$$$$$$$$$$$$$$$$$$$$$$$??? ------------------>" << car_s << " check car s" << check_car_s << " diff " << (car_s - check_car_s) << " lane " << (int) d/4 << endl;
+			if (fabs(car_s - check_car_s) < 20)
+			{
+				canSwitch = false;
+				cout << i<< " ************  DON'T SWITCH ************************* ------------------> "<< (car_s - check_car_s) <<endl;
+							
+			}
+		}
+	}
+
+	if (canSwitch)
+		cout << "################ SWITCHinG to  ************************* ------------------> " << lane << endl;
+	else
+		cout << "###############DON'T SWITCH ************************* ------------------> "<< lane  <<endl;
+
+	
+	return canSwitch;
+}
+
+
 int main() {
   uWS::Hub h;
 
@@ -242,14 +285,100 @@ int main() {
 
           	json msgJson;
 
-		double ref_val = 49.5;
+		double ref_val = car_speed;
 		std::cout << "prev path x= "<< car_x << " y=" << car_y << " s=" << car_s << " d=" << car_d<< " yaw=" << car_yaw << " speed=" << car_speed;;
 		double prev_size=previous_path_x.size();
 		std::cout << "prev size "<< prev_size<<endl;
+		int lane = (int) (end_path_d/4);
 
-		int lane = 1;
+		cout<<"current speed is "<< ref_val << " current lane " << lane << endl;
+		if (prev_size >0)
+		{
+			car_s = end_path_s;
+		}
+		bool too_close = false;
 
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+		cout << "Sensor fusion size " << sensor_fusion.size() << endl;
+		//find ref_v to use
+		for (int i=0; i < sensor_fusion.size(); i++)
+		{
+			//find car in my lane
+			float d = sensor_fusion[i][6];
+			if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane -2))
+			{
+				double vx = sensor_fusion[i][3];
+				double vy = sensor_fusion[i][4];
+				double check_speed = sqrt(vx*vx+vy*vy);
+				double check_car_s = sensor_fusion[i][5];
+
+				check_car_s += ((double) prev_size * 0.02 * check_speed);
+				//check s values greater than mine and s gap
+				if ((check_car_s > car_s && (check_car_s - car_s) < 30))
+				{
+					//TODO: 
+					too_close = true;
+					//change to a lane
+					//if too close, try different lanes
+					bool canSwitch = false;
+					switch (lane)
+					{
+						case 0:
+						case 2:
+							canSwitch = evalLaneToSwitch(sensor_fusion, 1, car_s, prev_size);
+							if (canSwitch)
+							{
+								lane = 1;
+								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+							}
+							else
+							{
+								//reduce speed more, can't change lane
+								//ref_val -= 5;
+								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+							}
+
+							break;
+
+						case 1:
+							canSwitch = evalLaneToSwitch(sensor_fusion, 0, car_s, prev_size);
+							if (canSwitch)
+							{
+								lane = 0;
+								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+							}
+							else if (evalLaneToSwitch(sensor_fusion, 2, car_s, prev_size))
+							{
+								lane = 2;
+								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+							}
+							else
+							{
+								//reduce speed more, can't change lane
+								//ref_val -= 5;
+								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+							}
+
+					}
+				}
+			}
+			
+		}
+
+		double inc = 2.24;
+
+		if (too_close)
+		{
+			ref_val = max(ref_val - inc, 5);
+			cout << "---------reducing speed, new speed " << ref_val << endl;
+		}
+		else if (ref_val < MAX_SPEED-0.5)
+		{
+			ref_val = min(ref_val+inc, MAX_SPEED);
+			cout << "+++++++++ increasing speed, new speed " << ref_val << endl;
+		}		
+
+		
+		cout<<"*** adj current speed is "<< ref_val << " current lane " << lane << endl;
 
 		vector<double> ptsx;
 		vector<double> ptsy;
@@ -291,11 +420,10 @@ int main() {
 
 			ptsy.push_back(ref_y_prev);
 			ptsy.push_back(ref_y);
-		cout<< " INN prev points" << "ptsx x="<< ptsx[0] << "," << ptsx[1] << "ptsy  y=" << ptsy[0] << "," << ptsy[1]<< " ref x" << ref_x << " refy " << ref_y<< " ptsx size " << ptsx.size() <<endl;
 			
 		}
 
-		cout<< " prev points" << "ptsx x="<< ptsx[0] << "," << ptsx[1] << "ptsy  y=" << ptsy[0] << "," << ptsy[1]<< " ref x" << ref_x << " refy " << ref_y<< " ptsx size " << ptsx.size()<< endl;
+		//cout<< " prev points" << "ptsx x="<< ptsx[0] << "," << ptsx[1] << "ptsy  y=" << ptsy[0] << "," << ptsy[1]<< " ref x" << ref_x << " refy " << ref_y<< " ptsx size " << ptsx.size()<< endl;
 
 		//In Frenet add evenly 30m spaced points ahead of the starting ref
 		vector<double> next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -310,13 +438,13 @@ int main() {
 		ptsy.push_back(next_wp1[1]);
 		ptsy.push_back(next_wp2[1]);
 
-		cout<< "wp x" << next_wp0[0] << " wp1 " << next_wp1[0] << " wp2 " << next_wp2[0]<< endl; 
-		cout<< "wp y" << next_wp0[1] << " wp1 " << next_wp1[1] << " wp2 " << next_wp2[1]<< endl; 
+		//cout<< "wp x" << next_wp0[0] << " wp1 " << next_wp1[0] << " wp2 " << next_wp2[0]<< endl; 
+		//cout<< "wp y" << next_wp0[1] << " wp1 " << next_wp1[1] << " wp2 " << next_wp2[1]<< endl; 
 
-		cout<< "ref points x="<< ref_x << " y=" << ref_y << " Yaw=" << ref_yaw << " ptsx size " << ptsx.size()<<endl;
+		//cout<< "ref points x="<< ref_x << " y=" << ref_y << " Yaw=" << ref_yaw << " ptsx size " << ptsx.size()<<endl;
 		for (int i=0; i < ptsx.size(); i++)
 		{
-			cout<< " i=" << i << "ptsx x="<< ptsx[i] << "ptsy  y=" << ptsy[i] << " ref x" << ref_x << " refy " << ref_y<<endl;
+			//cout<< " i=" << i << "ptsx x="<< ptsx[i] << "ptsy  y=" << ptsy[i] << " ref x" << ref_x << " refy " << ref_y<<endl;
 			//shift car ref angle to 0 degrees
 			double shift_x = ptsx[i] - ref_x;
 			double shift_y = ptsy[i] - ref_y;
@@ -324,7 +452,7 @@ int main() {
 			ptsx[i] = (shift_x * cos(0 - ref_yaw) - shift_y * sin(0 - ref_yaw));
 			ptsy[i] = (shift_x * sin(0 - ref_yaw) + shift_y * cos(0 - ref_yaw));
 
-			cout<< "i " << i << " x " << ptsx[i] << " y " << ptsy[i]<< endl; 
+			//cout<< "i " << i << " x " << ptsx[i] << " y " << ptsy[i]<< endl; 
 		}
 	
 		//create a spline
@@ -350,14 +478,18 @@ int main() {
 
 		double target_dist = sqrt(target_x * target_x + target_y * target_y);
 
+
 		double x_add_on = 0;
 
-		std::cout<< "*** startx_vals size " << next_x_vals.size() << " y_vals size " << next_y_vals.size()<< "\n";
 		int total_points = 50;
+		double N = (target_dist/(0.02 * ref_val/2.24));
+
+		cout << "Target dist "<< target_dist << " target y " << target_y << " N " << N << endl;
+
 		//fill the rest of the path planner after using previous points
 		for (int i=0; i < total_points - previous_path_x.size(); i++)
 		{
-			double N = (target_dist/(0.02 * ref_val/2.24));
+			//Sample every 0.02 sec. 
 			double x_point = x_add_on + (target_x)/N;
 			double y_point = s(x_point);
 			
@@ -377,7 +509,7 @@ int main() {
 			next_y_vals.push_back(y_point);
 		}
 
-		std::cout<< "x_vals size " << next_x_vals.size() << " y_vals size " << next_y_vals.size()<< "\n";
+		//std::cout<< "x_vals size " << next_x_vals.size() << " y_vals size " << next_y_vals.size()<< "\n";
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
