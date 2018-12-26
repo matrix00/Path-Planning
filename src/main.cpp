@@ -22,6 +22,18 @@ constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 double MAX_SPEED=49.5;
+double inc = 2.24;
+double acc = 9.5; //acceleration max 10 m/s2
+double dcc = 9.5; //decceleration max 10 m/s2
+enum STATE {STATE_CONTINUE=0, STATE_SLOW_DOWN, STATE_PREPARE_LANE_CHANGE};
+
+struct FAState {
+	STATE currState;
+	int currLane;
+	int changeLaneTo;
+}; 
+
+FAState fas;
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -168,7 +180,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 }
 
 
-bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car_s, int prev_size)
+bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car_s, double car_speed, int prev_size)
 {
 	bool canSwitch = true;
 
@@ -183,12 +195,13 @@ bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car
 			double check_speed = sqrt(vx*vx+vy*vy);
 			double check_car_s = sensor_fusion[i][5];
 
-			//check_car_s -= ((double) prev_size * 0.02 * check_speed);
-			check_car_s -= ((double) 1 * check_speed); //distance cover by 1 sec
+			check_car_s -= ((double) prev_size * 0.02 * check_speed);
+			//check_car_s -= ((double) 1 * fabs(car_speed+check_speed)); //distance cover by 1 sec
+
 			//check s values greater than mine and s gap
 //			if ((check_car_s > car_s && (check_car_s - car_s) < 30))
 			cout << i<<  " $$$$$$$$$$$$$$$$$  SWITCH $$$$$$$$$$$$$$$$$$$$$$$$??? ------------------>" << car_s << " check car s" << check_car_s << " diff " << (car_s - check_car_s) << " lane " << (int) d/4 << endl;
-			if (fabs(car_s - check_car_s) < 20)
+			if (fabs(car_s - check_car_s) < 35)
 			{
 				canSwitch = false;
 				cout << i<< " ************  DON'T SWITCH ************************* ------------------> "<< (car_s - check_car_s) <<endl;
@@ -209,6 +222,10 @@ bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car
 
 int main() {
   uWS::Hub h;
+
+	fas.currState = STATE_CONTINUE;
+	fas.changeLaneTo = -1; //invalid
+
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
   vector<double> map_waypoints_x;
@@ -284,14 +301,24 @@ int main() {
           	auto sensor_fusion = j[1]["sensor_fusion"];
 
           	json msgJson;
-
+		int lane;
+	
 		double ref_val = car_speed;
-		std::cout << "prev path x= "<< car_x << " y=" << car_y << " s=" << car_s << " d=" << car_d<< " yaw=" << car_yaw << " speed=" << car_speed;;
 		double prev_size=previous_path_x.size();
 		std::cout << "prev size "<< prev_size<<endl;
-		int lane = (int) (end_path_d/4);
+		if (fas.changeLaneTo != -1) // need to change lane
+		{
+			fas.currLane = fas.changeLaneTo;
+			fas.currState = STATE_CONTINUE;
+		}
+		else 
+		{
+			fas.currLane =  (int) (end_path_d/4);
+			fas.changeLaneTo = -1;
+		}
+		lane = fas.currLane ;
 
-		cout<<"current speed is "<< ref_val << " current lane " << lane << endl;
+		std::cout << "prev path x= "<< car_x << " y=" << car_y << " s=" << car_s << " d=" << car_d<< " yaw=" << car_yaw << " speed=" << car_speed<< " lane "<< lane << " state " << fas.currState << endl;
 		if (prev_size >0)
 		{
 			car_s = end_path_s;
@@ -300,6 +327,9 @@ int main() {
 
 		cout << "Sensor fusion size " << sensor_fusion.size() << endl;
 		//find ref_v to use
+
+		//if (fas.currState != STATE_PREPARE_LANE_CHANGE )
+		//{
 		for (int i=0; i < sensor_fusion.size(); i++)
 		{
 			//find car in my lane
@@ -324,38 +354,46 @@ int main() {
 					{
 						case 0:
 						case 2:
-							canSwitch = evalLaneToSwitch(sensor_fusion, 1, car_s, prev_size);
+							canSwitch = evalLaneToSwitch(sensor_fusion, 1, car_s, car_speed, prev_size);
 							if (canSwitch)
 							{
 								lane = 1;
 								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								fas.currState = STATE_PREPARE_LANE_CHANGE;
+								fas.changeLaneTo = 1;
 							}
 							else
 							{
 								//reduce speed more, can't change lane
 								//ref_val -= 5;
 								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+								fas.currState = STATE_SLOW_DOWN;
 							}
 
 							break;
 
 						case 1:
-							canSwitch = evalLaneToSwitch(sensor_fusion, 0, car_s, prev_size);
+							canSwitch = evalLaneToSwitch(sensor_fusion, 0, car_s, car_speed, prev_size);
 							if (canSwitch)
 							{
-								lane = 0;
+								//lane = 0;
 								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								fas.currState = STATE_PREPARE_LANE_CHANGE;
+								fas.changeLaneTo = 0;
 							}
-							else if (evalLaneToSwitch(sensor_fusion, 2, car_s, prev_size))
+							else if (evalLaneToSwitch(sensor_fusion, 2, car_s, car_speed, prev_size))
 							{
-								lane = 2;
+								//lane = 2;
 								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								fas.currState = STATE_PREPARE_LANE_CHANGE;
+								fas.changeLaneTo = 2;
 							}
 							else
 							{
 								//reduce speed more, can't change lane
 								//ref_val -= 5;
 								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+								fas.currState = STATE_SLOW_DOWN;
 							}
 
 					}
@@ -364,16 +402,26 @@ int main() {
 			
 		}
 
-		double inc = 2.24;
+		//}
 
-		if (too_close)
+
+		if (fas.currState == STATE_SLOW_DOWN)
 		{
-			ref_val = max(ref_val - inc, 5);
-			cout << "---------reducing speed, new speed " << ref_val << endl;
+			if (!too_close)
+				fas.currState = STATE_CONTINUE;
+			else
+			{
+				//v = u  - a t
+//				ref_val = max(ref_val - inc, 10);
+				ref_val = max(ref_val - dcc * 0.02 * 2.24, 10);
+				cout << "---------reducing speed, new speed " << ref_val << endl;
+			}
 		}
 		else if (ref_val < MAX_SPEED-0.5)
 		{
-			ref_val = min(ref_val+inc, MAX_SPEED);
+//			ref_val = min(ref_val+inc, MAX_SPEED);
+//			v = u  + a t
+			ref_val = min(ref_val +  acc * 0.5 * 2.24, MAX_SPEED);
 			cout << "+++++++++ increasing speed, new speed " << ref_val << endl;
 		}		
 
