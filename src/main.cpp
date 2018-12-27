@@ -23,12 +23,28 @@ double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 double MAX_SPEED=49.5;
 double inc = 1.12;
-double acc = 5 * 0.224;   //acceleration max 10 m/s2. try to increase speed at 5 m/s
-double dcc = 5 * 0.224;   //decceleration max 10 m/s2
+double acc = 2 * 0.224;   //acceleration max 10 m/s2. try to increase speed at 5 m/s
+double dcc = 2 * 0.224;   //decceleration max 10 m/s2
 double ref_val = 0;
+
+
+//finite automata state
+//Use 3 states                          
+//                        /-------------OK to Change Lane------------------------>
+//                       /                                                        \
+//        if <---\      /                                                          \
+//        not     \    /--Too Close, Can't change lane----->\                       \
+//        max   |----------|                        |-----------|               |---------------------|
+//      speed,  |  CONTINUE|                        |  SLOW_DOWN|               |  PREPARE_LANE_CHANGE|
+//       inc    |----------|                        |-----------|               |---------------------|                                   
+//     speed     |    \<-----Not too Close anymore----------/                              /
+//        \----->|     \                                                                  /
+//                      \                                                                /
+//                       \<--------------------------Lane change done -------------------
+
 enum STATE {STATE_CONTINUE=0, STATE_SLOW_DOWN, STATE_PREPARE_LANE_CHANGE};
 
-int myCar = 0;
+int myCar = 1;
 
 struct FAState {
 	STATE currState;
@@ -190,7 +206,6 @@ bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car
 	for (int i=0; i < sensor_fusion.size(); i++)
 	{
 		float d = sensor_fusion[i][6];
-		cout << i << " ######### lane # of this car " << (int) d/4 << endl;
 		if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane -2))
 		{
 			double vx = sensor_fusion[i][3];
@@ -199,25 +214,26 @@ bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car
 			double check_car_s = sensor_fusion[i][5];
 
 			check_car_s -= ((double) prev_size * 0.02 * check_speed);
-			//check_car_s -= ((double) 1 * fabs(car_speed+check_speed)); //distance cover by 1 sec
 
 			//check s values greater than mine and s gap
-//			if ((check_car_s > car_s && (check_car_s - car_s) < 30))
-			cout << i<<  " $$$$$$$$$$$$$$$$$  SWITCH $$$$$$$$$$$$$$$$$$$$$$$$??? ------------------>" << car_s << " check car s" << check_car_s << " diff " << (car_s - check_car_s) << " lane " << (int) d/4 << endl;
+			//cout << i<<  " $$$$$$$$$$$$$$$$$  SWITCH $$$$$$$$$$$$$$$$$$$$$$$$??? ------------------>" << car_s << " check car s" << check_car_s << " diff " << (car_s - check_car_s) << " lane " << (int) d/4 << endl;
 			if (fabs(car_s - check_car_s) < 30)
 			{
 				canSwitch = false;
-				cout << i<< " ************  DON'T SWITCH ************************* ------------------> "<< (car_s - check_car_s) <<endl;
+				//cout << i<< " ************  DON'T SWITCH ************************* ------------------> "<< (car_s - check_car_s) <<endl;
 							
 			}
 		}
 	}
 
 	if (canSwitch)
-		cout << "################ SWITCHinG to  ************************* ------------------> " << lane << endl;
+	{
+		//cout << "################ SWITCHinG to  ************************* ------------------> " << lane << endl;
+	}
 	else
-		cout << "###############DON'T SWITCH ************************* ------------------> "<< lane  <<endl;
-
+	{	
+		//cout << "###############DON'T SWITCH ************************* ------------------> "<< lane  <<endl;
+	}
 	
 	return canSwitch;
 }
@@ -283,31 +299,29 @@ int main() {
         if (event == "telemetry") {
           // j[1] is the data JSON object
           
-		std::cout << "start Telemetry ";
 
         	// Main car's localization Data
-          	double car_x = j[1]["x"];
-          	double car_y = j[1]["y"];
-          	double car_s = j[1]["s"];
-          	double car_d = j[1]["d"];
-          	double car_yaw = j[1]["yaw"];
-          	double car_speed = j[1]["speed"];
+          	double car_x = j[myCar]["x"];
+          	double car_y = j[myCar]["y"];
+          	double car_s = j[myCar]["s"];
+          	double car_d = j[myCar]["d"];
+          	double car_yaw = j[myCar]["yaw"];
+          	double car_speed = j[myCar]["speed"];
 
           	// Previous path data given to the Planner
-          	auto previous_path_x = j[1]["previous_path_x"];
-          	auto previous_path_y = j[1]["previous_path_y"];
+          	auto previous_path_x = j[myCar]["previous_path_x"];
+          	auto previous_path_y = j[myCar]["previous_path_y"];
           	// Previous path's end s and d values 
-          	double end_path_s = j[1]["end_path_s"];
-          	double end_path_d = j[1]["end_path_d"];
+          	double end_path_s = j[myCar]["end_path_s"];
+          	double end_path_d = j[myCar]["end_path_d"];
 
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
-          	auto sensor_fusion = j[1]["sensor_fusion"];
+          	auto sensor_fusion = j[myCar]["sensor_fusion"];
 
           	json msgJson;
 		int lane;
 	
 		double prev_size=previous_path_x.size();
-		std::cout << "prev size "<< prev_size<<endl;
 		if (fas.changeLaneTo != -1) // need to change lane
 		{
 			fas.currLane = fas.changeLaneTo;
@@ -320,18 +334,14 @@ int main() {
 		}
 		lane = fas.currLane ;
 
-		std::cout << "prev path x= "<< car_x << " y=" << car_y << " s=" << car_s << " d=" << car_d<< " yaw=" << car_yaw << " speed=" << car_speed<< " lane "<< lane << " state " << fas.currState << endl;
+//		std::cout << "prev path x= "<< car_x << " y=" << car_y << " s=" << car_s << " d=" << car_d<< " yaw=" << car_yaw << " speed=" << car_speed<< " lane "<< lane << " state " << fas.currState << endl;
 		if (prev_size >0)
 		{
 			car_s = end_path_s;
 		}
 		bool too_close = false;
 
-		cout << "Sensor fusion size " << sensor_fusion.size() << endl;
-		//find ref_v to use
 
-		//if (fas.currState != STATE_PREPARE_LANE_CHANGE )
-		//{
 		for (int i=0; i < sensor_fusion.size(); i++)
 		{
 			//find car in my lane
@@ -347,7 +357,6 @@ int main() {
 				//check s values greater than mine and s gap
 				if ((check_car_s > car_s && (check_car_s - car_s) < 30))
 				{
-					//TODO: 
 					too_close = true;
 					//change to a lane
 					//if too close, try different lanes
@@ -359,16 +368,14 @@ int main() {
 							canSwitch = evalLaneToSwitch(sensor_fusion, 1, car_s, car_speed, prev_size);
 							if (canSwitch)
 							{
-								lane = 1;
-								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								//cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
 								fas.currState = STATE_PREPARE_LANE_CHANGE;
 								fas.changeLaneTo = 1;
 							}
 							else
 							{
 								//reduce speed more, can't change lane
-								//ref_val -= 5;
-								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+								//cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
 								fas.currState = STATE_SLOW_DOWN;
 							}
 
@@ -378,23 +385,20 @@ int main() {
 							canSwitch = evalLaneToSwitch(sensor_fusion, 0, car_s, car_speed, prev_size);
 							if (canSwitch)
 							{
-								//lane = 0;
-								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								//cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
 								fas.currState = STATE_PREPARE_LANE_CHANGE;
 								fas.changeLaneTo = 0;
 							}
 							else if (evalLaneToSwitch(sensor_fusion, 2, car_s, car_speed, prev_size))
 							{
-								//lane = 2;
-								cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
+								//cout << "Yayyyyy   SWITCH to************************* ------------------> "<< lane  <<endl;
 								fas.currState = STATE_PREPARE_LANE_CHANGE;
 								fas.changeLaneTo = 2;
 							}
 							else
 							{
 								//reduce speed more, can't change lane
-								//ref_val -= 5;
-								cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
+								//cout << "CANTTTTTTTTTT   SWITCH to************************* ------------------> reduce speed to "<< ref_val  <<endl;
 								fas.currState = STATE_SLOW_DOWN;
 							}
 
@@ -404,31 +408,29 @@ int main() {
 			
 		}
 
-		//}
 
 
 		if (fas.currState == STATE_SLOW_DOWN)
 		{
 			if (!too_close)
+			{
 				fas.currState = STATE_CONTINUE;
+			}
 			else
 			{
 				//v = u  - a t
 				ref_val = max(ref_val - dcc, 10);
-//				ref_val = max(ref_val - dcc * 0.02 * 2.24, 10);
-				cout << "---------reducing speed, new speed " << ref_val << endl;
+				//cout << "---------reducing speed, new speed " << ref_val << endl;
 			}
 		}
 		else if (ref_val < MAX_SPEED-0.5)
 		{
 			ref_val = min(ref_val+acc, MAX_SPEED);
 //			v = u  + a t
-//			ref_val = min(ref_val +  acc * 0.5 * 2.24, MAX_SPEED);
-			cout << "+++++++++ increasing speed, new speed " << ref_val << endl;
+			//cout << "+++++++++ increasing speed, new speed " << ref_val << endl;
 		}		
 
 		
-		cout<<"*** adj current speed is "<< ref_val << " current lane " << lane << endl;
 
 		vector<double> ptsx;
 		vector<double> ptsy;
@@ -442,7 +444,6 @@ int main() {
 		//if previous state is almost empty, use the car as start
 		if (prev_size <2)
 		{
-			std::cout << "prev size less than 2 " << prev_size << endl;
 			//use two points that make the path tangent to the car
 			double prev_car_x = car_x - cos(car_yaw);
 			double prev_car_y = car_y - sin(car_yaw);
@@ -455,7 +456,6 @@ int main() {
 		}
 		else //use the previous path's end point as starting reference.
 		{
-			std::cout << "prev size not < 2 " << prev_size << " ptsx size "<< ptsx.size()<< endl;
 			ref_x = previous_path_x[prev_size -1];
 			ref_y = previous_path_y[prev_size -1];
 
@@ -488,13 +488,9 @@ int main() {
 		ptsy.push_back(next_wp1[1]);
 		ptsy.push_back(next_wp2[1]);
 
-		//cout<< "wp x" << next_wp0[0] << " wp1 " << next_wp1[0] << " wp2 " << next_wp2[0]<< endl; 
-		//cout<< "wp y" << next_wp0[1] << " wp1 " << next_wp1[1] << " wp2 " << next_wp2[1]<< endl; 
 
-		//cout<< "ref points x="<< ref_x << " y=" << ref_y << " Yaw=" << ref_yaw << " ptsx size " << ptsx.size()<<endl;
 		for (int i=0; i < ptsx.size(); i++)
 		{
-			//cout<< " i=" << i << "ptsx x="<< ptsx[i] << "ptsy  y=" << ptsy[i] << " ref x" << ref_x << " refy " << ref_y<<endl;
 			//shift car ref angle to 0 degrees
 			double shift_x = ptsx[i] - ref_x;
 			double shift_y = ptsy[i] - ref_y;
@@ -502,7 +498,6 @@ int main() {
 			ptsx[i] = (shift_x * cos(0 - ref_yaw) - shift_y * sin(0 - ref_yaw));
 			ptsy[i] = (shift_x * sin(0 - ref_yaw) + shift_y * cos(0 - ref_yaw));
 
-			//cout<< "i " << i << " x " << ptsx[i] << " y " << ptsy[i]<< endl; 
 		}
 	
 		//create a spline
@@ -533,7 +528,7 @@ int main() {
 
 		int total_points = 50;
 
-		cout << "Target dist "<< target_dist << " target y " << target_y << endl;
+		//cout << "Target dist "<< target_dist << " target y " << target_y << endl;
 
 		//fill the rest of the path planner after using previous points
 		for (int i=0; i < total_points - previous_path_x.size(); i++)
