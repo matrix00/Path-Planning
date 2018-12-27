@@ -22,10 +22,13 @@ constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 double MAX_SPEED=49.5;
-double inc = 2.24;
-double acc = 9.5; //acceleration max 10 m/s2
-double dcc = 9.5; //decceleration max 10 m/s2
+double inc = 1.12;
+double acc = 5 * 0.224;   //acceleration max 10 m/s2. try to increase speed at 5 m/s
+double dcc = 5 * 0.224;   //decceleration max 10 m/s2
+double ref_val = 0;
 enum STATE {STATE_CONTINUE=0, STATE_SLOW_DOWN, STATE_PREPARE_LANE_CHANGE};
+
+int myCar = 0;
 
 struct FAState {
 	STATE currState;
@@ -201,7 +204,7 @@ bool evalLaneToSwitch(nlohmann::basic_json<> sensor_fusion, int lane, double car
 			//check s values greater than mine and s gap
 //			if ((check_car_s > car_s && (check_car_s - car_s) < 30))
 			cout << i<<  " $$$$$$$$$$$$$$$$$  SWITCH $$$$$$$$$$$$$$$$$$$$$$$$??? ------------------>" << car_s << " check car s" << check_car_s << " diff " << (car_s - check_car_s) << " lane " << (int) d/4 << endl;
-			if (fabs(car_s - check_car_s) < 35)
+			if (fabs(car_s - check_car_s) < 30)
 			{
 				canSwitch = false;
 				cout << i<< " ************  DON'T SWITCH ************************* ------------------> "<< (car_s - check_car_s) <<endl;
@@ -303,7 +306,6 @@ int main() {
           	json msgJson;
 		int lane;
 	
-		double ref_val = car_speed;
 		double prev_size=previous_path_x.size();
 		std::cout << "prev size "<< prev_size<<endl;
 		if (fas.changeLaneTo != -1) // need to change lane
@@ -412,16 +414,16 @@ int main() {
 			else
 			{
 				//v = u  - a t
-//				ref_val = max(ref_val - inc, 10);
-				ref_val = max(ref_val - dcc * 0.02 * 2.24, 10);
+				ref_val = max(ref_val - dcc, 10);
+//				ref_val = max(ref_val - dcc * 0.02 * 2.24, 10);
 				cout << "---------reducing speed, new speed " << ref_val << endl;
 			}
 		}
 		else if (ref_val < MAX_SPEED-0.5)
 		{
-//			ref_val = min(ref_val+inc, MAX_SPEED);
+			ref_val = min(ref_val+acc, MAX_SPEED);
 //			v = u  + a t
-			ref_val = min(ref_val +  acc * 0.5 * 2.24, MAX_SPEED);
+//			ref_val = min(ref_val +  acc * 0.5 * 2.24, MAX_SPEED);
 			cout << "+++++++++ increasing speed, new speed " << ref_val << endl;
 		}		
 
@@ -530,14 +532,14 @@ int main() {
 		double x_add_on = 0;
 
 		int total_points = 50;
-		double N = (target_dist/(0.02 * ref_val/2.24));
 
-		cout << "Target dist "<< target_dist << " target y " << target_y << " N " << N << endl;
+		cout << "Target dist "<< target_dist << " target y " << target_y << endl;
 
 		//fill the rest of the path planner after using previous points
 		for (int i=0; i < total_points - previous_path_x.size(); i++)
 		{
 			//Sample every 0.02 sec. 
+			double N = (target_dist/(0.02 * ref_val/2.24));
 			double x_point = x_add_on + (target_x)/N;
 			double y_point = s(x_point);
 			
